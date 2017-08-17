@@ -11,6 +11,7 @@ def printout(s):
     if (args.verbose):
         sys.stderr.write(str(s) + '\n')
 
+
 # Load arguments from the command line.
 argparser = argparse.ArgumentParser(
     description="Turns C/C++ files into an #include dependency graph in .dot format",
@@ -65,6 +66,14 @@ argparser.add_argument(
     help="The filename suffixes to parse (default: .cpp, .h, .cxx, .c, .hpp)"
 )
 
+# --input will specify input files to use.
+argparser.add_argument(
+    "-in", "--input",
+    nargs="+",
+    default=[],
+    help="Set a list of files to use as input."
+)
+
 # --verbose will emit verbose warnings to stderr.
 argparser.add_argument(
     "-v", "--verbose",
@@ -114,6 +123,7 @@ except IOError:
     printout(sys.argv[0] + ": Could not open configuration file: " + args.config, file=sys.stderr)
     exit()
 
+
 # Pretty print the JSON
 # pprint.pprintout(config)
 
@@ -132,11 +142,13 @@ def emit_str(info, s):
 
 # Increments the indent level in the info dictionary
 def inc_indent(info):
-    info["indent_level"] = info['indent_level']+1
+    info["indent_level"] = info['indent_level'] + 1
+
 
 # Decrements the indent level in the info dictionary
 def dec_indent(info):
-    info["indent_level"] = info['indent_level']-1
+    info["indent_level"] = info['indent_level'] - 1
+
 
 # Emits the property with the name
 def emit_property(info, property_tree, name):
@@ -154,28 +166,35 @@ def log_cluster(log, cluster_name, node_name):
     # If there is no cluster there yet, create it.
     if (not (cluster_name in log['clusters'].keys())):
         printout(cluster_name + " is not in log['clusters']'s keys")
-        log['clusters'].update({ cluster_name : [] })
+        log['clusters'].update({cluster_name: []})
 
     # Append the node_name to the cluster.
     if (not (node_name in log['clusters'][cluster_name])):
         printout(node_name + " is not in log['clusters'][cluster_name]'s keys")
         log['clusters'][cluster_name].append(node_name)
 
+
 # Logs a cluster filter function using Python regex
 def config_cluster(info, cluster_tree):
     name = cluster_tree['name']
     regex = cluster_tree['regex']
-    #print(name + " :: " + regex)
+    # print(name + " :: " + regex)
     printout("config_cluster: " + name + '::' + regex)
+
     # Add a filtering function to the info['cluster_filters'] list:
     def filter_cluster(log, filename, name=name, regex=regex):
         if (re.match(regex, filename)):
             log_cluster(log, name, filename)
+
     # Append the filtering function to the list.
     info['cluster_filters'].append(filter_cluster)
 
+
 # Gets all of the valid source files.
 def get_source_files():
+    if len(args.input) > 0:
+        return args.input
+
     list_files = []
     for item in args.include:
         # Get all of the files recursively or not in the included path.
@@ -194,17 +213,20 @@ def get_source_files():
                         break
     return list_files
 
+
 # Process the cluster filters by applying all the filter functions to
 # the filename.
 def process_cluster_filters(info, log, filename):
     for func in info['cluster_filters']:
         func(log, filename)
 
+
 # Process the node filters by applying all the filter functions to
 # the filename.
 def process_node_filters(info, log, filename):
     for func in info['node_filters']:
         func(log, filename)
+
 
 # Parse the files and emit the edges.
 def parse_files_and_emit_edges(info, log, source_files):
@@ -215,38 +237,63 @@ def parse_files_and_emit_edges(info, log, source_files):
         regex_string = "#include\s+\".*\""
     else:
         regex_string = "#include\s+((\<.*\>)|(\".*\"))"
+
+    already_processed_files = set()
+
     # For all filenames, process filter functions and then
-    for filename in source_files:
-        with open(filename) as filein:
-            # Get the adjusted current_filename
-            if (args.filepath == 'filename'):
-                current_filename = os.path.basename(filename)
-            elif (args.filepath == 'relative'):
-                current_filename = filename
-            # Process the filters for the current filename.
-            process_cluster_filters(info, log, current_filename)
-            process_node_filters(info, log, current_filename)
-            for line in filein:
-                # Find a match if its there.
-                regex_match = re.match(regex_string, line)
-                if (regex_match != None):
-                    # Find the included filename.
-                    included_filename = regex_match.group(0).split()[1]
-                    included_filename = included_filename.replace('\"', '')
-                    filter_filename = included_filename.replace('<', '')
-                    filter_filename = filter_filename.replace('>', '')
-                    # Process filters for the current filename.
-                    process_cluster_filters(info, log, filter_filename)
-                    process_node_filters(info, log, filter_filename)
-                    # Write the current edge.
-                    if (not args.reverse_edge_dir):
-                        emit_str(
-                            info,
-                            '\"' + current_filename + '\" -> \"' + filter_filename + '\"\n')
-                    else:
-                        emit_str(
-                            info,
-                            '\"' + filter_filename + '\" -> \"' + current_filename + '\"\n')
+    while True:
+        new_files = set()
+        for filename in source_files:
+            with open(filename) as filein:
+                printout("File : " + filename)
+                already_processed_files.add(filename)
+                # Get the adjusted current_filename
+                if (args.filepath == 'filename'):
+                    current_filename = os.path.basename(filename)
+                elif (args.filepath == 'relative'):
+                    current_filename = filename
+                # Process the filters for the current filename.
+                process_cluster_filters(info, log, current_filename)
+                process_node_filters(info, log, current_filename)
+                for line in filein:
+                    # Find a match if its there.
+                    regex_match = re.match(regex_string, line)
+                    if (regex_match != None):
+                        # Find the included filename.
+                        included_filename = regex_match.group(0).split()[1]
+                        is_system = False
+                        if included_filename.find('<') != -1:
+                            is_system = True
+                        elif included_filename.find('>') != -1:
+                            is_system = True
+                        included_filename = included_filename.replace('\"', '')
+                        filter_filename = included_filename.replace('<', '')
+                        filter_filename = filter_filename.replace('>', '')
+                        # Process filters for the current filename.
+                        process_cluster_filters(info, log, filter_filename)
+                        process_node_filters(info, log, filter_filename)
+                        if not is_system and os.path.basename(filter_filename) not in already_processed_files:
+                            printout("File found : " + filter_filename)
+                            new_files.add(filter_filename)
+                        # Write the current edge.
+                        edge_style = ""
+                        if is_system == True:
+                            edge_style = "[dir = none, color=lightgray]"
+
+                        if (not args.reverse_edge_dir):
+                            emit_str(
+                                info,
+                                '\"' + current_filename + '\" -> \"' + filter_filename + '\"' + edge_style + '\n')
+                        else:
+                            emit_str(
+                                info,
+                                '\"' + filter_filename + '\" -> \"' + current_filename + '\"' + edge_style + '\n')
+        new_files_list = list(new_files)
+        if len(new_files_list) == 0:
+            break
+        source_files = new_files_list
+
+
 
 # Emit cluster information
 def emit_clusters(info, log):
@@ -257,6 +304,7 @@ def emit_clusters(info, log):
             emit_str(info, '\"' + node_name + '\"\n')
         dec_indent(info)
         emit_str(info, "}\n")
+
 
 # Log a node that has been filtered.
 def log_node(log, name, tree):
@@ -275,12 +323,14 @@ def log_node(log, name, tree):
 def config_node(info, config_tree):
     regex = config_tree['regex']
     tree = config_tree
-    #print(name + " :: " + regex)
+    # print(name + " :: " + regex)
     printout("config_node: " + regex)
+
     # Add a filtering function to the info['node_filters'] list:
     def filter_node(log, filename, tree=tree, regex=regex):
         if (re.match(regex, filename)):
             log_node(log, filename, tree)
+
     # Append the filtering function to the list.
     info['node_filters'].append(filter_node)
 
@@ -294,8 +344,8 @@ def emit_output(info, log, config_tree):
     for pair in config_tree:
         # If it's a property, emit it
         if (pair == "graph" or
-            pair == "node" or
-            pair == "edge"):
+                    pair == "node" or
+                    pair == "edge"):
             emit_property(info, config_tree[pair], pair)
         # If it's a $cluster filter, read in the info
         elif (pair.startswith("$cluster_")):
@@ -318,6 +368,7 @@ def emit_output(info, log, config_tree):
     dec_indent(info)
     emit_str(info, '}')
 
+
 ######################################################################
 ######################################################################
 ######################################################################
@@ -326,21 +377,20 @@ def emit_output(info, log, config_tree):
 with open(args.output, "w") as output_file:
     # The configuration info dictionary to be filled
     info = {
-        "indent_level"          : 0,
-        "indent_string"         : '  ',
-        "fout"                  : output_file,
-        "cluster_filters"       : [],
-        "node_filters"          : []
+        "indent_level": 0,
+        "indent_string": '  ',
+        "fout": output_file,
+        "cluster_filters": [],
+        "node_filters": []
     }
     log = {
-        "indent_level"          : info['indent_level'],
-        "indent_string"         : info['indent_string'],
-        "clusters"              : {},
-        "logged_nodes"          : [],
-        "fout"                  : output_file,
+        "indent_level": info['indent_level'],
+        "indent_string": info['indent_string'],
+        "clusters": {},
+        "logged_nodes": [],
+        "fout": output_file,
     }
 
     # Emit the output .dot file.
     emit_output(info, log, config)
     printout("Done.")
-
